@@ -135,7 +135,9 @@ total_variance <- sum(variances)
 percent_variance <- variances/total_variance
 ```
 
-## Population
+## Biological effects
+
+### Population
 
 ```{r plot_population, echo=FALSE, message=TRUE, cache=FALSE, dependson=c("PC_computation", "obtain_expr_matrices", "setup", "input")}
 #V2 is the column referring to population
@@ -159,7 +161,7 @@ l[[num]] <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,num], y=PCA_res$
 l
 ```
 
-## Developmental stage
+### Developmental stage
 
 ```{r plot_dev_stage, dependson="PC_computation", echo=FALSE}
 #V3 is the column referring to dev stage
@@ -181,7 +183,10 @@ l[[number]] <- int_plot
 l
 ```
 
-## Total RNA extraction date
+
+## Technical effects
+
+### Total RNA extraction date
 
 ```{r plot_RNA_extraction, dependson="PC_computation", echo=FALSE}
 #V4 is the column referring to RNA extraction
@@ -206,7 +211,7 @@ l[[number]] <- int_plot
 l
 ```
 
-## Sequencing set
+### Sequencing set
 
 ```{r plot_sequencing_set, dependson="PC_computation", echo=FALSE}
 #V9 is the column referring to the sequencing set in GDL_general_df
@@ -232,7 +237,7 @@ l
 ```
 
 
-## Transportation box
+### Transportation box
 
 ```{r plot_transportation_box, dependson="PC_computation", echo=FALSE}
 #V6 is the column referring to the box in GDL_general_df
@@ -259,7 +264,7 @@ l[[number]] <- int_plot
 l
 ```
 
-## mRNA isolation date
+### mRNA isolation date
 
 ```{r plot_mRNA isolation, dependson="PC_computation", echo=FALSE}
 #V8 is the column referring to mRNA isolation date
