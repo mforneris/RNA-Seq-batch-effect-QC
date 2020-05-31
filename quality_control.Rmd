@@ -1,0 +1,287 @@
+---
+title: "GDL quality control"
+output:
+   BiocStyle::html_document:
+      toc: true
+      df_print: paged
+      self_contained: true
+      code_download: true
+      highlight: tango
+#bibliography: knn_ml_intro.bib
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r style, echo=FALSE, results="asis"}
+library("knitr")
+options(digits = 2, width = 80)
+options(bitmapType = 'cairo')
+golden_ratio <- (1 + sqrt(5)) / 2
+opts_chunk$set(echo = TRUE, tidy = FALSE, include = TRUE, cache = FALSE,
+               dev=c('png', 'pdf', 'svg'), fig.height = 5, fig.width = 4 * golden_ratio, comment = '  ', dpi = 300)
+```
+
+
+
+
+<br><br><br>
+
+```{r setup, include=TRUE, cache=FALSE, echo=FALSE, message=FALSE}
+.libPaths( c( .libPaths(), "/g/furlong/forneris/software/R/"))
+
+#library(htmlwidgets, lib.loc="/g/furlong/forneris/software/R")
+#library(plotly, lib.loc="/g/furlong/forneris/software/R")
+library(htmlwidgets)
+library(plotly)
+library(ggplot2)
+library(ggfortify)
+library(gridExtra)
+library(Rtsne)
+library(LSD)
+library(colorspace)
+library(dplyr)
+
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(fig.path = "images/")
+knitr::opts_chunk$set(cache=FALSE)
+```
+
+```{r functions, dependson="setup"}
+```
+
+```{r inputs, dependson=c("setup"), cache=FALSE}
+data_dir <- "/g/furlong/project/56_GDL_QTL/data/mapping/"
+quantification_files <- list.files(path=data_dir, pattern = "rsem.genes.results$", 
+                                  full.names = FALSE, recursive = FALSE, include.dirs = FALSE)
+GDL_general_df <- read.table("/g/furlong/project/56_GDL_QTL/data/quality_control/files_PCA_stratification/GDL_complete_matrix.txt", header=FALSE)
+GDL_quantification <- quantification_files[grep("^GDL", quantification_files)]
+random_tab <- read.table(paste(data_dir, GDL_quantification[1], sep=""), header=FALSE)
+gene_names <- as.vector(random_tab$V1)
+
+first <- c("GDL_RNA-seq_ZS29_10-12h_set2_HVCKJBGX2_15-05-2017_lane1_rsem.genes.results",
+           "GDL_RNA-seq_ZW190_10-12h_set1_HNH5HBGX2_15-05-2017_lane1_rsem.genes.results")
+replicates <- c("GDL_RNA-seq_ZS29-reseq_10-12h_set4_HYL7KBGX2_20-06-2017_lane1_rsem.genes.results",
+               "GDL_RNA-seq_ZW190-reseq_10-12h_set4_HYL7KBGX2_20-06-2017_lane1_rsem.genes.results")
+```
+
+
+```{r obtain_expr_matrices, dependson=c("setup", "inputs"), echo=FALSE}
+##obtain gene expression matrices
+#all genes
+for (file in GDL_quantification) {
+  path <- paste(data_dir, file, sep="")
+  input <- read.table(path, header=TRUE)
+  expr_values <- as.vector(input$TPM)
+  final_expr_values <- append(expr_values, file, after=0)
+  tmp <- cbind(gene_names, final_expr_values)
+  gene_names <- tmp
+}
+
+final <- gene_names
+colnames(final) <- final[1,]; final <- final[-1,]
+rownames(final) <- final[,1]; final <- final[,-1]
+final <- apply(final, c(1,2), as.numeric)
+
+TPM_matrix <- t(final)
+rownames(TPM_matrix) <- gsub("_rsem.genes.results", "", rownames(TPM_matrix))
+log_TPM_matrix <- apply(TPM_matrix, c(1,2), log)
+
+#expressed genes
+col_sub = apply(TPM_matrix, 2, function(col) all(col !=0 ))
+expr_TPM_matrix <- TPM_matrix[,col_sub]
+log_expr_TPM_matrix <- apply(expr_TPM_matrix, c(1,2), log)
+#rownames(log_expr_TPM_matrix) <- gsub("_rsem.genes.results", "", rownames(log_expr_TPM_matrix))
+```
+
+
+# Introduction
+
+Global diversity lines (GDLs): collection of 84 D.Melanogaster strains obtained after 12 generations of full-sib inbreeding, originally from five different geographic locations scattered on all continents.
+
+Our data include RNA-seq for 96 GDL samples, representing all five populations and spanning three developmental time-points:
+
+**Beijing**     18   
+**Ithaca**      17       
+**Netherlands** 19       
+**Tasmania**    20       
+**Zimbabwe**    22 
+
+**10-12hrs**    85  
+**2-4hrs**      6  
+**6-8hrs**      5  
+
+Gene expression quantification in **TPM** (transcript per million) was performed by **RSEM**.   
+TPM are computed so that the sum of all gene expression values in each sample is constant, allowing direct comparisons. 
+
+# Principal Component Analysis
+
+We carried out a PC analysis for two reasons:   
+* evaluate if differences in gene expression were sufficient to discriminate a population structure.  
+* identify possible batch effect due to technical factors (e.g RNA extraction, mRNA isolation, etc...)  
+
+Only genes expressed in all GDL samples were considered in computing the PCs (**`r ncol(log_expr_TPM_matrix)`** out of **`r nrow(random_tab)`)**, with all expression values in the logarithmic form. 
+
+Plots representing the first five PCs are colored according to different samples' features, and the percentage of variance explained by each PC is reported on the correponding axis.
+
+NB: **the first PC explain 46% of the total variance**, and it seems to separate samples according to either RNA extraction date or box in which the samples were transported (we could not really separate the two variables, since samples extracted on the putative problematic day were also carried in the same box).
+
+```{r PC_computation, dependson=c("setup", "functions", "inputs", "obtain_expr_matrices"), echo=FALSE, cache=FALSE}
+#perform PC analysis
+PCA_res <- prcomp(log_expr_TPM_matrix)
+
+#compute relative variance
+variances <- PCA_res$sdev^2
+total_variance <- sum(variances)
+percent_variance <- variances/total_variance
+```
+
+## Population
+
+```{r plot_population, echo=FALSE, message=TRUE, cache=FALSE, dependson=c("PC_computation", "obtain_expr_matrices", "setup", "input")}
+#V2 is the column referring to population
+l <- htmltools::tagList()
+
+for (number in 1:4) {
+num <- number
+num_y <- number+1
+xvar <- percent_variance[number]
+yvar <- percent_variance[number+1]
+xtit <- paste(paste0("PC", number), round(xvar, digits=3), sep=" ~ ")
+ytit <- paste(paste0("PC", num_y), round(yvar, digits=3), sep=" ~ ")
+x <- list(title=xtit)
+y <- list(title=ytit)
+l[[num]] <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,num], y=PCA_res$x[,num_y], type = "scatter", mode="markers",
+        text = gsub("_", " ", gsub("GDL_RNA-seq_", "", gsub("_set.*", "", rownames(PCA_res$x)))), 
+        color=GDL_general_df$V2, colors=(rainbow(length(unique(GDL_general_df$V2))))) %>% 
+        layout(xaxis=x, yaxis=y)
+}
+
+l
+```
+
+## Developmental stage
+
+```{r plot_dev_stage, dependson="PC_computation", echo=FALSE}
+#V3 is the column referring to dev stage
+l <- htmltools::tagList()
+
+for (number in seq(1,4)) {
+num_y <- number+1
+xvar <- percent_variance[number]
+yvar <- percent_variance[number+1]
+xtit <- paste(paste0("PC", number), round(xvar, digits=3), sep=" ~ ")
+ytit <- paste(paste0("PC", num_y), round(yvar, digits=3), sep=" ~ ")
+x <- list(title=xtit)
+y <- list(title=ytit)
+int_plot <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,number], y=PCA_res$x[,num_y], type = "scatter", mode="markers", 
+                    text = gsub("_", " ", gsub("GDL_RNA-seq_", "", gsub("_set.*", "", rownames(PCA_res$x)))), color=GDL_general_df$V3, colors=(rainbow(length(unique(GDL_general_df$V3))))) %>% layout(xaxis=x, yaxis=y)
+l[[number]] <- int_plot
+}
+
+l
+```
+
+## Total RNA extraction date
+
+```{r plot_RNA_extraction, dependson="PC_computation", echo=FALSE}
+#V4 is the column referring to RNA extraction
+l <- htmltools::tagList()
+
+for (number in seq(1,4)) {
+num_y <- number+1
+xvar <- percent_variance[number]
+yvar <- percent_variance[number+1]
+xtit <- paste(paste0("PC", number), round(xvar, digits=3), sep=" ~ ")
+ytit <- paste(paste0("PC", num_y), round(yvar, digits=3), sep=" ~ ")
+x <- list(title=xtit)
+y <- list(title=ytit)
+int_plot <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,number], y=PCA_res$x[,num_y], type = "scatter", mode="markers",
+                    text = gsub("_", " ", gsub("GDL_RNA-seq_", "", gsub("_set.*", "", rownames(PCA_res$x)))),
+        color=GDL_general_df$V4, colors=(rainbow(length(unique(GDL_general_df$V4))))) %>% 
+        layout(xaxis=x, yaxis=y)
+
+l[[number]] <- int_plot
+}
+
+l
+```
+
+## Sequencing set
+
+```{r plot_sequencing_set, dependson="PC_computation", echo=FALSE}
+#V9 is the column referring to the sequencing set in GDL_general_df
+l <- htmltools::tagList()
+
+for (number in seq(1,4)) {
+num_y <- number+1
+xvar <- percent_variance[number]
+yvar <- percent_variance[number+1]
+xtit <- paste(paste0("PC", number), round(xvar, digits=3), sep=" ~ ")
+ytit <- paste(paste0("PC", num_y), round(yvar, digits=3), sep=" ~ ")
+x <- list(title=xtit)
+y <- list(title=ytit)
+int_plot <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,number], y=PCA_res$x[,num_y], type = "scatter", mode="markers", 
+                    text = gsub("_", " ", gsub("GDL_RNA-seq_", "", gsub("_set.*", "", rownames(PCA_res$x)))), 
+        color=GDL_general_df$V9, colors=(rainbow(length(unique(GDL_general_df$V9))))) %>% 
+        layout(xaxis=x, yaxis=y)
+
+l[[number]] <- int_plot
+}
+
+l
+```
+
+
+## Transportation box
+
+```{r plot_transportation_box, dependson="PC_computation", echo=FALSE}
+#V6 is the column referring to the box in GDL_general_df
+l <- htmltools::tagList()
+mod_box <- as.vector(GDL_general_df$V6)
+mod_box[grep(",",mod_box)] <- "not_defined"
+
+for (number in seq(1,4)) {
+num_y <- number+1
+xvar <- percent_variance[number]
+yvar <- percent_variance[number+1]
+xtit <- paste(paste0("PC", number), round(xvar, digits=3), sep=" ~ ")
+ytit <- paste(paste0("PC", num_y), round(yvar, digits=3), sep=" ~ ")
+x <- list(title=xtit)
+y <- list(title=ytit)
+int_plot <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,number], y=PCA_res$x[,num_y], type = "scatter", mode="markers", 
+                    text = gsub("_", " ", gsub("GDL_RNA-seq_", "", gsub("_set.*", "", rownames(PCA_res$x)))), 
+        color=mod_box, colors=(rainbow(length(unique(mod_box))))) %>% 
+        layout(xaxis=x, yaxis=y)
+
+l[[number]] <- int_plot
+}
+
+l
+```
+
+## mRNA isolation date
+
+```{r plot_mRNA isolation, dependson="PC_computation", echo=FALSE}
+#V8 is the column referring to mRNA isolation date
+l <- htmltools::tagList()
+
+for (number in seq(1,4)) {
+num <- number  
+num_y <- number+1
+xvar <- percent_variance[number]
+yvar <- percent_variance[number+1]
+xtit <- paste(paste0("PC", number), round(xvar, digits=3), sep=" ~ ")
+ytit <- paste(paste0("PC", num_y), round(yvar, digits=3), sep=" ~ ")
+x <- list(title=xtit)
+y <- list(title=ytit)
+int_plot <- plot_ly(data=as.data.frame(PCA_res$x), x=PCA_res$x[,num], y=PCA_res$x[,num_y], type = "scatter", mode="markers", 
+                    text = gsub("_", " ", gsub("GDL_RNA-seq_", "", gsub("_set.*", "", rownames(PCA_res$x)))), 
+        color=GDL_general_df$V8, colors=(rainbow(length(unique(GDL_general_df$V8))))) %>% 
+        layout(xaxis=x, yaxis=y)
+
+l[[number]] <- int_plot
+}
+
+l
+```
+
